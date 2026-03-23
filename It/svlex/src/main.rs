@@ -11,10 +11,7 @@ use crate::netlist::Bus;
 fn main() {
     let text = "
 
-    int a = 2;
-    int b;
-    if (a == 2) b = 0;
-    else b = 1;
+    
 
     ".to_string();
 
