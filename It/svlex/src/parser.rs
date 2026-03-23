@@ -747,7 +747,7 @@ impl Parser {
         Block::Module { ports: ports, name: name, code: code }
     }
     pub fn parse_code(&mut self, endpoint: Token) -> Vec<Stmt> {
-        println!("code parsing");
+
         let mut parts: Vec<Stmt> = Vec::new();
         loop {
             let current = match self.peek() {
