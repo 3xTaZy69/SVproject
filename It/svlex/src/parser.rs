@@ -195,7 +195,7 @@ impl Parser {
                 }
                 expr
             },
-            _ => panic!("EXPECTED NUMBER OR IDENT OR PARENS")
+            _ => panic!("EXPECTED NUMBER OR IDENT OR PARENS, GOT {}", a)
         }
     }
     fn parse_un(&mut self) -> Expr {
@@ -596,8 +596,10 @@ impl Parser {
         let mut default: bool = false;
         let mut expr = Expr::Int(0);
         if let Some(Token::DEFAULT) = self.peek() {
-            default = true
+            default = true;
+            self.advance();
         } else {
+
             expr = self.parse_exp();
         }
         self.require(Token::COLON);
@@ -614,7 +616,6 @@ impl Parser {
         } else {
             let mut code: Vec<Stmt> = Vec::new();
             code.push(self.parse_code_once());
-            self.advance();
             if default {
                 Case::Default { body: code }
             } else {
@@ -625,10 +626,10 @@ impl Parser {
     pub fn parse_case(&mut self) -> Stmt {
         self.require(Token::CASE);
         self.advance();
-        self.require(Token::LBRACK);
+        self.require(Token::LPAREN);
         self.advance();
         let expr = self.parse_exp();
-        self.require(Token::RBRACK);
+        self.require(Token::RPAREN);
         self.advance();
         let mut cases: Vec<Case> = Vec::new();
         loop {
@@ -746,9 +747,14 @@ impl Parser {
         Block::Module { ports: ports, name: name, code: code }
     }
     pub fn parse_code(&mut self, endpoint: Token) -> Vec<Stmt> {
+        println!("code parsing");
         let mut parts: Vec<Stmt> = Vec::new();
         loop {
-            let current = self.peek().unwrap_or(break);
+            let current = match self.peek() {
+                Some(x) => x,
+                None => break,
+            };
+            if current == endpoint {break}
             if matches!(current, Token::INTKW | Token::LOGIC | Token::WIRE | Token::REG) {
                 parts.push(self.parse_decl())
             } else if let Token::IF = current {
@@ -844,15 +850,15 @@ impl Parser {
     }
     pub fn parse(&mut self) -> Vec<Part> {
         let mut parts: Vec<Part> = Vec::new();
-        println!("parsing");
+
         loop {
             let current = match self.peek() {
                 Some(x) => x,
                 None => break,
             };
-            println!("current: {}", current);
+
             if matches!(current, Token::INTKW | Token::LOGIC | Token::WIRE | Token::REG) {
-                println!("parsing decl");
+
                 parts.push(Part::Stmt(self.parse_decl()))
             } else if let Token::IF = current {
                 parts.push(Part::Stmt(self.parse_if()))
