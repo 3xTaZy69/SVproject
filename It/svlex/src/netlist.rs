@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use std::{cmp::min, ops::{self, Add}, sync::Mutex};
+use std::{cmp::min, collections::HashMap, ops::{self, Add}, sync::Mutex};
 use lazy_static::lazy_static;
 
 #[derive(Clone)]
@@ -169,6 +169,13 @@ impl Bus {
             connect(other.nl_index, n.nl_index);
         }
     }
+    fn connect_logic_bitwise_by(&self, other: Bus) {
+        for self_bit in 0..other.width as usize {
+            for other_bit in self_bit..other.width as usize {
+                connect(self.contains[self_bit].nl_index, other.contains[other_bit].nl_index);
+            }
+        }
+    }
 
 }
 
@@ -320,19 +327,6 @@ impl Bits for Bus {
     }
     fn len(&self) -> u32 {
         self.contains.len() as u32
-    }
-}
-
-
-struct Logical {
-    contains: NBlock,
-}
-
-impl Logical {
-    fn new(op: u8, lhs: Box<dyn Bits>, pos: [i32; 3], fixed: bool) -> Logical {
-        let contains = NBlock::new(op, pos[0], pos[1], pos[2], fixed, 0, Vec::new());
-        lhs.connect_logic(contains.clone());
-        Logical { contains: contains }
     }
 }
 
@@ -518,5 +512,132 @@ impl Dff {
         }
 
         Dff { output: tff, edgein: edgein, width: width }
+    }
+}
+
+pub struct Comparator {
+    pub output: NBlock
+}
+
+impl Comparator {
+    pub fn new_eq(pos: [i32; 3], a: Bus, b: Bus, fixed: bool, width: u32) -> Comparator {
+        let xnor = Bus::new(width, pos, fixed, 11);
+        let out = NBlock::new(1, pos[0]+width as i32, pos[1], pos[2], fixed, 0, Vec::new());
+        xnor.connect_logic(out.clone());
+        &a + &xnor;
+        &b + &xnor;
+        Comparator { output: out }
+    }
+    pub fn new_neq(pos: [i32; 3], a: Bus, b: Bus, fixed: bool, width: u32) -> Comparator {
+        let xnor = Bus::new(width, pos, fixed, 11);
+        let out = NBlock::new(10, pos[0]+width as i32, pos[1], pos[2], fixed, 0, Vec::new());
+        xnor.connect_logic(out.clone());
+        &a + &xnor;
+        &b + &xnor;
+        Comparator { output: out }
+    }
+    pub fn new_gt(pos: [i32; 3], a: Bus, b: Bus, fixed: bool, width: u32) -> Comparator {
+        let [x, y, z] = pos;
+        let xor = Bus::new(width, pos, fixed, 3);
+        let and = Bus::new(width, [x,y,z-1], fixed, 1);
+        let not = Bus::new(width-1, [x+1,y,z-2], fixed, 0);
+        let out = NBlock::new(15, x+width as i32, y, z, fixed, 0, Vec::new());
+
+        &a + &xor;
+        &b + &xor;
+        &a + &and;
+        &xor + &and;
+        and.connect_logic(out.clone());
+        let andnot = and.slice_bus(1, width as u64);
+        &not + &andnot;
+        xor.connect_logic_bitwise_by(not);
+
+        Comparator { output: out }
+
+    }
+    pub fn new_lt(pos: [i32; 3], a: Bus, b: Bus, fixed: bool, width: u32) -> Comparator {
+        let [x, y, z] = pos;
+        let xor = Bus::new(width, pos, fixed, 3);
+        let and = Bus::new(width, [x,y,z-1], fixed, 1);
+        let not = Bus::new(width-1, [x+1,y,z-2], fixed, 0);
+        let out = NBlock::new(15, x+width as i32, y, z, fixed, 0, Vec::new());
+
+        &a + &xor;
+        &b + &xor;
+        &b + &and;
+        &xor + &and;
+        and.connect_logic(out.clone());
+        let andnot = and.slice_bus(1, width as u64);
+        &not + &andnot;
+        xor.connect_logic_bitwise_by(not);
+
+        Comparator { output: out }
+
+    }
+    pub fn new_ge(pos: [i32; 3], a: Bus, b: Bus, fixed: bool, width: u32) -> Comparator {
+        let [x, y, mut z] = pos;
+        let eq  = Comparator::new_eq(pos, a.clone(), b.clone(), fixed, width);
+        z -= 1;
+        let xor = Bus::new(width, pos, fixed, 3);
+        let and = Bus::new(width, [x,y,z-1], fixed, 1);
+        let not = Bus::new(width-1, [x+1,y,z-2], fixed, 0);
+        let out = NBlock::new(15, x+width as i32, y, z, fixed, 0, Vec::new());
+
+        &a + &xor;
+        &b + &xor;
+        &a + &and;
+        &xor + &and;
+        and.connect_logic(out.clone());
+        let andnot = and.slice_bus(1, width as u64);
+        &not + &andnot;
+        &eq.output + &out;
+        xor.connect_logic_bitwise_by(not);
+
+        Comparator { output: out }
+
+    }
+    pub fn new_le(pos: [i32; 3], a: Bus, b: Bus, fixed: bool, width: u32) -> Comparator {
+        let [x, y, mut z] = pos;
+        let eq  = Comparator::new_eq(pos, a.clone(), b.clone(), fixed, width);
+        z -= 1;
+        let xor = Bus::new(width, pos, fixed, 3);
+        let and = Bus::new(width, [x,y,z-1], fixed, 1);
+        let not = Bus::new(width-1, [x+1,y,z-2], fixed, 0);
+        let out = NBlock::new(15, x+width as i32, y, z, fixed, 0, Vec::new());
+
+        &a + &xor;
+        &b + &xor;
+        &b + &and;
+        &xor + &and;
+        and.connect_logic(out.clone());
+        let andnot = and.slice_bus(1, width as u64);
+        &not + &andnot;
+        &eq.output + &out;
+        xor.connect_logic_bitwise_by(not);
+
+        Comparator { output: out }
+
+    }
+}
+
+pub struct Mux {
+    output: Bus
+}
+
+impl Mux {
+    pub fn new(true_val: Bus, false_val: Bus, sel: NBlock, pos: [i32; 3], fixed: bool, width: u32) -> Mux {
+        let [x, y, z] = pos;
+        let t = Bus::new(width, pos, fixed, 1);
+        let f = Bus::new(width, [x,y,z-1], fixed, 1);
+        let nsel = NBlock::new(0, x-1, y, z, fixed, 1, Vec::new());
+        let o = Bus::new(width, [x,y,z-2], fixed, 15);
+        &t + &o;
+        &f + &o;
+        &true_val + &t;
+        &false_val + &f;
+        t.connect_from_one(sel.clone());
+        f.connect_from_one(nsel.clone());
+        &sel + &nsel;
+        Mux { output: o }
     }
 }

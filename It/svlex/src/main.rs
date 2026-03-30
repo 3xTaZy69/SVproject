@@ -5,57 +5,44 @@ mod parser;
 mod netlist;
 use parser::*;
 mod ir;
-
-use crate::netlist::Bus;
-
+mod semantic;
 
 fn main() {
     let text = "
-
-    int a = 1;
-    int b;
-    case (a)
-        0: begin b = 1; end
-        4'b0001: begin b = 2; end
-        4'b0010: b = 4;
-        4'b0011: b = 8;
-    endcase
-
+        logic a = 0;
+        always_ff @(posedge clk) begin
+            a <= 2;
+        end
     ".to_string();
 
     let mut lxr = Lexer::new(text);
     lxr.lex();
 
-    let mut _prs = Parser::new(lxr.tokens.clone());
-    let x = _prs.parse();
+    let mut _prs = Parser::new(lxr.tokens);
+    let x = _prs.parse_decl(); 
+    _prs.ast.push(Part::Stmt(x));
+    _prs.parse();
 
-    for var in &_prs.vars {
-        println!("var {}", var)
-    }
-    println!("{:?}", _prs.vars);
+
+
+    semantic::analyse(_prs.ast.clone()).unwrap();
     
-    for t in lxr.tokens {
-        println!("{t}")
-    } 
+    _prs.ast = semantic::resolve_decls(_prs.ast);
+
+    let mut i = ir::Ir {ir: Vec::new(), tmpcounter: 0};
+    
+    if let Some(resolved_first) = _prs.ast.first() {
+        if let Part::Stmt(stmt) = resolved_first {
+            i.lower_decl(stmt.clone());
+        }
+    } else {
+        println!("AST пустое!");
+    }
+    
+    for j in i.ir {
+        println!(
+            "{:?}\n------------",
+            j
+        )
+    }
 }
-
-
-/*
-fn main() {
-
-    let clk = netlist::NBlock::new(5, 0, 5, 0, false, 0, Vec::new());
-
-    let edg = netlist::Edge::new_negedge([0,0,0], clk, false);
-
-    let mut v = Vec::new();
-    v.push(edg);
-
-    let input = Bus::new(8, [0,0,-2], false, 5);
-
-    let reg = netlist::Reg::new(8, [0,0,5], false);
-
-    reg.addin([0,0,3], v, 8, false, input);
-
-    netlist::assemble();
-}
-*/

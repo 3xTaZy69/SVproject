@@ -2,13 +2,23 @@
 
 use crate::lex::*;
 
-pub enum Vtypes {
-    Logic,
-    Wire,
+#[derive(Debug, Clone)]
+pub enum Structure {
+    Net,
     Reg,
-    Int
+    Const,
+    Null,
+    Clock(u32),
 }
 
+#[derive(Debug, Clone)]
+pub enum Vtypes {
+    Logic(Structure),
+    Wire(Structure),
+    Reg(Structure),
+    Int(Structure)
+}
+#[derive(Debug, Clone)]
 pub enum BinOps {
     Add,
     Sub,
@@ -28,12 +38,13 @@ pub enum BinOps {
     MUL,
     DIV
 }
-
+#[derive(Debug, Clone)]
 pub enum UnOps {
     BitWiseNot,
     LogicNot,
+    Neg
 }
-
+#[derive(Debug, Clone)]
 pub enum Expr {
     BinExpr { 
         left: Box<Expr>, 
@@ -50,7 +61,7 @@ pub enum Expr {
     },
     Ident(String),
     Ref {
-        base: Box<Expr>,
+        base: String,
         h: u64,
         l: u64,
     },
@@ -60,18 +71,18 @@ pub enum Expr {
     },
     Int(u64),
 }
-
+#[derive(Debug, Clone)]
 pub enum Edge {
     Posedge(String),
     Negedge(String),
 }
-
+#[derive(Debug, Clone)]
 pub enum Sens {
     Timing(u32),
     Edge(Edge),
 }
 
-
+#[derive(Debug, Clone)]
 pub enum Case {
     Value {
         value: Expr, 
@@ -81,7 +92,7 @@ pub enum Case {
         body: Vec<Stmt>
     },
 }
-
+#[derive(Debug, Clone)]
 pub enum Stmt {
     BlockAssign {
         target: Expr,
@@ -115,20 +126,24 @@ pub enum Stmt {
         y: i32,
         z: i32,
         var: String,
+    },
+    Tick {
+        timing: u32,
+        dst: String
     }
 
 }
-
+#[derive(Debug, Clone)]
 pub enum Part {
     Stmt(Stmt),
     Block(Block),
 }
-
+#[derive(Debug, Clone)]
 pub enum Inout {
     Input(String, u32),
     Output(String, u32),
 }
-
+#[derive(Debug, Clone)]
 pub enum Block {
     AlwaysFf {
         clocks: Vec<Edge>,
@@ -150,7 +165,7 @@ pub enum Block {
 pub struct Parser {
     pos: usize,
     tokens: Vec<Token>,
-    ast: Vec<Part>,
+    pub ast: Vec<Part>,
     pub vars: Vec<String>,
 }
 
@@ -179,7 +194,7 @@ impl Parser {
             Token::IDENT(x) => {
                 if let Some(Token::LBRACK) = self.peek() {
                     let hl = self.hl();
-                    Expr::Ref { base: Box::new(Expr::Ident(x)), h: hl.0, l: hl.1 }
+                    Expr::Ref { base: x, h: hl.0, l: hl.1 }
                 } else {
                     Expr::Ident(x)
                 }
@@ -212,6 +227,13 @@ impl Parser {
                 Expr::UnExpr {
                     operand: Box::new(self.parse_un()),
                     op: UnOps::BitWiseNot,
+                }
+            },
+            Some(Token::MINUS) => {
+                self.advance();
+                Expr::UnExpr {
+                    operand: Box::new(self.parse_un()),
+                    op: UnOps::Neg,
                 }
             },
             _ => self.parse_i(),
@@ -447,8 +469,7 @@ impl Parser {
         self.advance();
         
         self.vars.push(name.clone());
-
-        Stmt::Decl { target: name, length: width, value: expr, vtype: vtype}
+        Stmt::Decl { target: name, length: width, value: expr, vtype: vtype(Structure::Null)}
 
     }
     pub fn parse_assign(&mut self)  -> Stmt {
@@ -456,7 +477,6 @@ impl Parser {
         if let Some(Token::ASSIGN) = self.peek() {
             self.advance();
             continuous = true;
-            self.advance();
         }
 
         self.require_ident();
@@ -504,7 +524,7 @@ impl Parser {
 
         if let Some(x) = h {
             let h = x;
-            let trgt = Expr::Ref { base: Box::new(Expr::Ident(name)), h: h, l: l };
+            let trgt = Expr::Ref { base: name, h: h, l: l };
             ret(trgt)
         } else {
             ret(Expr::Ident(name))
@@ -575,8 +595,8 @@ impl Parser {
         } else {
             code.push(self.parse_code_once());
         }
-        self.advance();
         if let Some(Token::ELSE) = self.peek() {
+            
             let mut fcode: Vec<Stmt> = Vec::new();
             self.advance();
                 if let Some(Token::BEGIN) = self.peek() {
@@ -653,14 +673,14 @@ impl Parser {
         };
         let mut edge = self.peek().unwrap_or_else(|| panic!("EDGE EXPECTED"));
         self.advance();
-        let mut clock: String = if let Some(Token::IDENT(x)) = self.peek() {x} else {panic!("CLOCK EXPECTED AFTER EDGE")};
+        let mut clock: String = if let Some(Token::IDENT(x)) = self.peek() {x} else {panic!("CLOCK EXPECTED AFTER EDGE, GOT {:?}", self.peek())};
         edges.push(choose(edge, clock));
         self.advance();
         while let Some(Token::EDGOR) = self.peek() {
             self.advance();
             edge = self.peek().unwrap_or_else(|| panic!("EDGE EXPECTED"));
             self.advance();
-            clock = if let Some(Token::IDENT(x)) = self.peek() {x} else {panic!("CLOCK EXPECTED AFTER EDGE")};
+            clock = if let Some(Token::IDENT(x)) = self.peek() {x} else {panic!("CLOCK EXPECTED AFTER EDGE, GOT {:?}", self.peek())};
             edges.push(choose(edge, clock));
             self.advance();
         }
@@ -675,6 +695,7 @@ impl Parser {
         self.require(Token::AT);
         self.advance();
         self.require(Token::LPAREN);
+        self.advance();
         let edges = self.parse_pn();
         self.require(Token::BEGIN);
         self.advance();
@@ -685,7 +706,7 @@ impl Parser {
     pub fn parse_inouts(&mut self) -> Vec<Inout> {
         let mut inouts: Vec<Inout> = Vec::new();
         
-        while !matches!(self.peek(), Some(Token::RPAREN)) {
+        while matches!(self.peek(), Some(Token::OUTPUT) | Some(Token::INPUT)) {
             inouts.extend(self.parse_inout());
         }
         self.require(Token::RPAREN);
@@ -693,20 +714,21 @@ impl Parser {
         inouts
     }
     pub fn parse_inout(&mut self) -> Vec<Inout> {
-        let itype = self.peek().unwrap_or_else(|| panic!("EXPECTED INPUT OR OUTPUT TYPE"));
+        let itype = self.peek().unwrap_or_else(|| panic!("EXPECTED INPUT OR OUTPUT TYPE, GOT NONE"));
         self.advance();
         let mut width = 1;
         if let Some(Token::LBRACK) = self.peek() {
             let hl = self.hl();
-            width = hl.0 - hl.1;
+            width = hl.0 - hl.1 + 1;
         }
         let mut inouts: Vec<Inout> = Vec::new();
 
         if let Some(Token::IDENT(x)) = self.peek() {
+            self.vars.push(x.clone());
             if let Token::INPUT = itype {
-                inouts.push(Inout::Input(x, width as u32))
+                inouts.push(Inout::Input(x, width as u32));
             } else if  let Token::OUTPUT = itype {
-                inouts.push(Inout::Output(x, width as u32))
+                inouts.push(Inout::Output(x, width as u32));
             } else {
                 panic!("EXPECTED INPUT OR OUTPUT, GOT {}", itype)
             }
@@ -716,12 +738,15 @@ impl Parser {
             self.advance();
                 if let Some(Token::IDENT(x)) = self.peek() {
                 if let Token::INPUT = itype {
-                    inouts.push(Inout::Input(x, width as u32))
+                    println!("parsed {}", x.clone());
+                    inouts.push(Inout::Input(x, width as u32));
+                    self.advance();
                 } else {
-                    inouts.push(Inout::Output(x, width as u32))
+                    println!("parsed {}", x.clone());
+                    inouts.push(Inout::Output(x, width as u32));
+                    self.advance();
                 } 
             }
-            self.advance();
         }
         inouts
 
@@ -732,16 +757,19 @@ impl Parser {
         let name;
         if let Some(Token::IDENT(x)) = self.peek() {
             name = x;
+            self.advance();
         } else {
             panic!("MODULE NAME EXPECTED");
         }
         let mut ports: Vec<Inout> = Vec::new();
         if let Some(Token::LPAREN) = self.peek() {
+            self.advance();
             ports = self.parse_inouts();
         }
         self.require(Token::SEMICOLON);
         self.advance();
         let code = self.parse_code_blockinc(Token::ENDMODULE);
+        self.require(Token::ENDMODULE);
         self.advance();
 
         Block::Module { ports: ports, name: name, code: code }
@@ -767,6 +795,8 @@ impl Parser {
                 } else {
                     panic!("IDENT {x} SHOULDNT BE HERE")
                 }
+            } else if let Token::ASSIGN = current {
+                parts.push(self.parse_assign());
             } else {
                 panic!("UNEXPECTED TOKEN TYPE, {}", current)
             }
@@ -776,10 +806,11 @@ impl Parser {
     pub fn parse_code_blockinc(&mut self, endpoint: Token) -> Vec<Part> {
         let mut parts: Vec<Part> = Vec::new();
         loop {
-            let current = self.peek().unwrap_or(break);
-            if matches!(current, endpoint) {
-                break
-            }
+            let current = match self.peek() {
+                Some(x) => x,
+                None => break,
+            };
+            if current == endpoint {break}
             if matches!(current, Token::INTKW | Token::LOGIC | Token::WIRE | Token::REG) {
                 parts.push(Part::Stmt(self.parse_decl()))
             } else if let Token::IF = current {
@@ -800,6 +831,8 @@ impl Parser {
                 } else {
                     panic!("IDENT {x} SHOULDNT BE HERE")
                 }
+            } else if let Token::ASSIGN = current {
+                parts.push(Part::Stmt(self.parse_assign()));
             } else {
                 panic!("UNEXPECTED TOKEN TYPE, {}", current)
             }
@@ -823,6 +856,8 @@ impl Parser {
                 } else {
                     panic!("IDENT {x} SHOULDNT BE HERE")
                 }
+            } else if let Token::ASSIGN = current {
+                self.parse_assign()
             } else {
                 panic!("UNEXPECTED TOKEN TYPE, {}", current)
             }
@@ -832,12 +867,34 @@ impl Parser {
         self.require(Token::INITIAL);
         self.advance();
         self.require(Token::BEGIN);
+        self.advance();
         let mut code: Vec<Stmt> = Vec::new();
         while !matches!(self.peek(), Some(Token::END)) {
-            code.push(self.parse_fixed());
+            if let Some(Token::FIXED) = self.peek() {
+                code.push(self.parse_fixed());
+            } else {
+                code.push(self.parse_tick());
+            }
         }
         self.advance();
         Block::Initial { code: code }
+    }
+    pub fn parse_tick(&mut self) -> Stmt {
+        self.require(Token::TICK);
+        self.advance();
+        self.require(Token::LPAREN);
+        self.advance();
+        self.require_int();
+        let timing = if let Some(Token::INT(x)) = self.peek() {x} else {0};
+        self.advance();
+        self.require(Token::RPAREN);
+        self.advance();
+        self.require_ident();
+        let name = if let Some(Token::IDENT(x)) = self.peek() {x} else {String::new()};
+        self.advance();
+        self.require(Token::SEMICOLON);
+        self.advance();
+        Stmt::Tick { timing: timing as u32, dst: name }
     }
     pub fn parse_comb(&mut self) -> Block {
         self.require(Token::ALWAYSCOMB);
@@ -848,7 +905,7 @@ impl Parser {
         self.advance();
         Block::AlwaysComb { code: code }
     }
-    pub fn parse(&mut self) -> Vec<Part> {
+    pub fn parse(&mut self) {
         let mut parts: Vec<Part> = Vec::new();
 
         loop {
@@ -856,9 +913,7 @@ impl Parser {
                 Some(x) => x,
                 None => break,
             };
-
             if matches!(current, Token::INTKW | Token::LOGIC | Token::WIRE | Token::REG) {
-
                 parts.push(Part::Stmt(self.parse_decl()))
             } else if let Token::IF = current {
                 parts.push(Part::Stmt(self.parse_if()))
@@ -878,6 +933,8 @@ impl Parser {
                 } else {
                     panic!("IDENT {x} SHOULDNT BE HERE")
                 }
+            } else if let Token::ASSIGN = current {
+                parts.push(Part::Stmt(self.parse_assign()));
             } else {
                 panic!("UNEXPECTED TOKEN TYPE, {}", current)
             }
@@ -886,7 +943,7 @@ impl Parser {
 
 
 
-        parts
+        self.ast.extend(parts);
     }
 
     
@@ -904,59 +961,13 @@ impl Parser {
 use core::panic;
 use std::{fmt, future::pending};
 
-impl fmt::Display for Vtypes {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            Vtypes::Int => "INT",
-            Vtypes::Logic => "LOGIC",
-            Vtypes::Wire => "WIRE",
-            Vtypes::Reg => "REG",
-        }.to_string();
 
-        write!(f, "{}", s)
-    }
-}
-
-impl fmt::Display for BinOps {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            BinOps::Add => "+",
-            BinOps::Sub => "-",
-            BinOps::MUL => "*",
-            BinOps::DIV => "/",
-            BinOps::BitWiseAnd => "&",
-            BinOps::BitWiseOr => "|",
-            BinOps::Xor => "^",
-            BinOps::LogicAnd => "&&",
-            BinOps::LogicOr => "||",
-            BinOps::ShiftL => "<<",
-            BinOps::ShiftR => ">>",
-            BinOps::Eq => "==",
-            BinOps::Lt => "<",
-            BinOps::Le => "<=",
-            BinOps::Gt => ">",
-            BinOps::Ge => ">=",
-            BinOps::Neq => "!=",
-        };
-        write!(f, "{}", s)
-    }
-}
-
-impl fmt::Display for UnOps {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = match self {
-            UnOps::BitWiseNot => "~",
-            UnOps::LogicNot => "!",
-        };
-        write!(f, "{}", s)
-    }
-}
 
 pub fn show_expr(expr: &Expr) -> String {
     match expr {
         Expr::BinExpr { left, op, right } => {
             format!(
-                "({} {} {})",
+                "({} {:?} {})",
                 show_expr(left),
                 op,
                 show_expr(right)
@@ -966,7 +977,7 @@ pub fn show_expr(expr: &Expr) -> String {
         Expr::Ident(x) => x.clone(),
         Expr::UnExpr { operand, op } => {
             format!(
-                "({}{})",
+                "({:?}{})",
                 op,
                 show_expr(operand)
             )
@@ -974,7 +985,7 @@ pub fn show_expr(expr: &Expr) -> String {
         Expr::Ref { base, h, l } => {
             format!(
                 "{}[{}:{}]",
-                show_expr(base),
+                base,
                 h,
                 l
             )

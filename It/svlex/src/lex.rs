@@ -45,8 +45,6 @@ pub enum Token {
     DOT,
     ASSIGN,
     ALWAYSCOMB,
-    INC,
-    DEC,
     PARAMETER,
     LOCALPARAM,
     BININT(u32, u64),
@@ -71,6 +69,7 @@ pub enum Token {
     INITIAL,
     FIXED,
     DEFAULT,
+    TICK
 }
 
 impl Token {
@@ -193,6 +192,7 @@ pub struct Lexer {
                 "initial" => Token::INITIAL,
                 "fixed" => Token::FIXED,
                 "default" => Token::DEFAULT,
+                "tick" => Token::TICK,
                 _ => Token::IDENT(w),
             }
         );
@@ -260,15 +260,8 @@ pub struct Lexer {
 
         self.advance();
 
-        if "+-".contains(self.peek().unwrap()) {
-            s.push(self.peek().unwrap());
-            self.advance();
-        }
-
         self.tokens.push(
             match s.as_str() {
-                "++" => Token::INC,
-                "--" => Token::DEC,
                 "+" => Token::PLUS,
                 "-" => Token::MINUS,
                 _ => Token::PLUS,
@@ -398,8 +391,6 @@ impl fmt::Display for Token {
             Token::DOT => "DOT".to_string(),
             Token::ASSIGN => "ASSIGN".to_string(),
             Token::ALWAYSCOMB => "ALWAYSCOMB".to_string(),
-            Token::DEC => "DEC".to_string(),
-            Token::INC => "INC".to_string(),
             Token::PARAMETER => "PARAMETER".to_string(),
             Token::LOCALPARAM => "LOCALPARAM".to_string(),
 
@@ -426,6 +417,7 @@ impl fmt::Display for Token {
             Token::INITIAL => "INITIAL".to_string(),
             Token::FIXED => "FIXED".to_string(),
             Token::DEFAULT => "DEFAULT".to_string(),
+            Token::TICK => "TICK".to_string(),
         };
 
         write!(f, "{}", s)
