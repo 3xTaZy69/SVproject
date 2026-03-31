@@ -592,6 +592,7 @@ impl Parser {
         if let Some(Token::BEGIN) = self.peek() {
             self.advance();
             code = self.parse_code(Token::END);
+            self.advance();
         } else {
             code.push(self.parse_code_once());
         }

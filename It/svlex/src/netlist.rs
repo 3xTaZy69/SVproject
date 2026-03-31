@@ -1,9 +1,11 @@
 #![allow(dead_code)]
 
+// TODO!!! - finish args and ZX disp
+
 use std::{cmp::min, collections::HashMap, ops::{self, Add}, sync::Mutex};
 use lazy_static::lazy_static;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 
 pub struct NBlock {
     pub nl_index: u32,
@@ -13,18 +15,20 @@ pub struct NBlock {
     z: i32,
     fixed: bool,
     active: u8,
-    args: Vec<String>
 }
 
 static NL: Mutex<u32> = Mutex::new(0);
 lazy_static! { 
     static ref BLOCKS: Mutex<Vec<NBlock>> = Mutex::new(Vec::new()); 
     static ref CONNECTIONS: Mutex<Vec<Connection>> = Mutex::new(Vec::new()); 
+
+    static ref ZDISP: Mutex<i32> = Mutex::new(0);
+    static ref XDISP: Mutex<i32> = Mutex::new(0);
 }
 
 
 impl NBlock {
-    pub fn new(bl_index: u8, x: i32, y: i32, z: i32, fixed: bool, active: u8, args: Vec<String>) -> NBlock {
+    pub fn new(bl_index: u8, x: i32, y: i32, z: i32, fixed: bool, active: u8) -> NBlock {
         let mut nl = NL.lock().unwrap();
         *nl += 1;
         let b = NBlock { nl_index: *nl, 
@@ -34,7 +38,6 @@ impl NBlock {
             z: z, 
             fixed: fixed,
             active: active,
-            args: args,
         };
         BLOCKS.lock().unwrap().push(b.clone());
         b
@@ -43,14 +46,12 @@ impl NBlock {
     fn text(&self) -> String {
         if self.bl_index == 5 {
             format!("{},{},{},{},{},0+0", self.bl_index, self.active, self.x, self.y, self.z)
-        } else if self.args.is_empty() {
-            format!("{},{},{},{},{},", self.bl_index, self.active, self.x, self.y, self.z)
         } else {
-            format!("{},{},{},{},{},{}", self.bl_index, self.active, self.x, self.y, self.z, self.args.join("+"))
+            format!("{},{},{},{},{}", self.bl_index, self.active, self.x, self.y, self.z)
         }
     }
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct Connection {
     lhs: u32,
     rhs: u32,
@@ -71,10 +72,10 @@ pub fn connect(left: u32, right: u32) -> Connection {
     Connection::new(left, right)
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Bus {
-    width: u32,
-    contains: Vec<NBlock>
+    pub width: u32,
+    pub contains: Vec<NBlock>
 }
 
 
@@ -87,7 +88,7 @@ impl Bus {
         let mut blocks: Vec<NBlock> = Vec::new();
 
         for _ in 0..width {
-            let block = NBlock::new(block_type, x, y, z, fixed, 0, Vec::new());
+            let block = NBlock::new(block_type, x, y, z, fixed, 0);
             x += 1;
             blocks.push(block);
         }
@@ -104,11 +105,11 @@ impl Bus {
         for i in 0..pos[0] {
             let idx = i as usize;
             if &mask[idx..idx+1] == "1" {
-                let block = NBlock::new(5, x, y, z, fixed, 1, Vec::new());
+                let block = NBlock::new(5, x, y, z, fixed, 1);
                 x += 1;
                 blocks.push(block);
             } else {
-                let block = NBlock::new(5, x, y, z, fixed, 0, Vec::new());
+                let block = NBlock::new(5, x, y, z, fixed, 0);
                 x += 1;
                 blocks.push(block);
             }
@@ -126,11 +127,11 @@ impl Bus {
         for i in 0..pos[0] {
             let idx = i as usize;
             if &mask[idx..idx+1] == "1" {
-                let block = NBlock::new(0, x, y, z, fixed, 0, Vec::new());
+                let block = NBlock::new(0, x, y, z, fixed, 0);
                 x += 1;
                 blocks.push(block);
             } else {
-                let block = NBlock::new(15, x, y, z, fixed, 0, Vec::new());
+                let block = NBlock::new(15, x, y, z, fixed, 0);
                 x += 1;
                 blocks.push(block);
             }
@@ -138,38 +139,38 @@ impl Bus {
 
         Bus { width, contains: blocks }
     }
-    fn get_msb(&self) -> NBlock {
+    pub fn get_msb(&self) -> NBlock {
         self.contains[0].clone()
     }
-    fn get_lsb(&self) -> NBlock {
+    pub fn get_lsb(&self) -> NBlock {
         let ln = self.contains.len()-1;
         self.contains[ln].clone()
     }
-    fn get_msbi(&self) -> u32 {
+    pub fn get_msbi(&self) -> u32 {
         self.contains[0].nl_index
     }
-    fn get_lsbi(&self) -> u32 {
+    pub fn get_lsbi(&self) -> u32 {
         let ln = self.contains.len()-1;
         self.contains[ln].nl_index
     }
-    fn slice_bus(&self, h: u64, l: u64) -> Bus {
+    pub fn slice_bus(&self, h: u64, l: u64) -> Bus {
         let slice: Vec<NBlock> = self.contains[h as usize..l as usize].iter().cloned().collect();
         Bus { width: slice.len() as u32, contains: slice }
     }
-    fn get(&self, index: u32) -> NBlock {
+    pub fn get(&self, index: u32) -> NBlock {
         self.contains[index as usize].clone()
     }
-    fn concat(&self, other: Bus) -> Bus {
+    pub fn concat(&self, other: Bus) -> Bus {
         let mut newcontains = self.contains.clone();
         newcontains.extend(other.contains);
         Bus { width: newcontains.len() as u32, contains: newcontains }
     }
-    fn connect_from_one(&self, other: NBlock) {
+    pub fn connect_from_one(&self, other: NBlock) {
         for n in &self.contains {
             connect(other.nl_index, n.nl_index);
         }
     }
-    fn connect_logic_bitwise_by(&self, other: Bus) {
+    pub fn connect_logic_bitwise_by(&self, other: Bus) {
         for self_bit in 0..other.width as usize {
             for other_bit in self_bit..other.width as usize {
                 connect(self.contains[self_bit].nl_index, other.contains[other_bit].nl_index);
@@ -179,9 +180,10 @@ impl Bus {
 
 }
 
+#[derive(Clone, Debug)]
 pub struct Reg {
-    width: u32,
-    contains: Bus
+    pub width: u32,
+    pub contains: Bus
 }
 
 impl Reg {
@@ -222,7 +224,7 @@ impl Reg {
         let [x, y, z] = pos;
         let xor = Bus::new(width, [x,y,z], fixed, 3);
         let and = Bus::new(width, [x,y,z-1], fixed, 1);
-        let edgein = NBlock::new(15, x+width as i32, y, z, fixed, 0, Vec::new());
+        let edgein = NBlock::new(15, x+width as i32, y, z, fixed, 0);
         &self.contains + &xor;
         &xor + &and;
         &and + &self.contains;
@@ -234,13 +236,14 @@ impl Reg {
     }
 }
 
-struct Wire {
-    width: u32,
-    contains: Bus
+#[derive(Clone, Debug)]
+pub struct Wire {
+    pub width: u32,
+    pub contains: Bus
 }
 
 impl Wire {
-   fn  new(width: u32, pos: [i32; 3], fixed: bool) -> Wire {
+   pub fn new(width: u32, pos: [i32; 3], fixed: bool) -> Wire {
     let contains = Bus::new(width, pos, fixed, 15);
     Wire { width: width, contains: contains }
    }
@@ -265,11 +268,13 @@ impl Wire {
     }
 }
 
+
 pub trait Bits {
     fn connect_bitwise(&self, other: &dyn Bits) {}
     fn connect_logic(&self, other: NBlock) {}
     fn get(&self, index: u32) -> NBlock {unimplemented!()}
     fn len(&self) -> u32 {unimplemented!()}
+    fn connect_lsb(&self, other: &dyn Bits) {}
 }
 
 impl Bits for Reg {
@@ -289,6 +294,9 @@ impl Bits for Reg {
     fn len(&self) -> u32 {
         self.contains.contains.len() as u32
     }
+    fn connect_lsb(&self, other: &dyn Bits) {
+        self.contains.connect_lsb(other);
+    }
 }
 
 impl Bits for Wire {
@@ -307,6 +315,9 @@ impl Bits for Wire {
     }
     fn len(&self) -> u32 {
         self.contains.contains.len() as u32
+    }
+    fn connect_lsb(&self, other: &dyn Bits) {
+        self.contains.connect_lsb(other);
     }
 }
 
@@ -328,6 +339,20 @@ impl Bits for Bus {
     fn len(&self) -> u32 {
         self.contains.len() as u32
     }
+    fn connect_lsb(&self, other: &dyn Bits) {
+        let slen = self.len();
+        let olen = other.len();
+        let mut diff;
+        if olen > slen {
+            diff = olen - slen;
+        } else {
+            diff = 0;
+        }
+
+        for block in 0..olen {
+            connect(self.get(block).nl_index, other.get(block+diff).nl_index);
+        }   
+    }
 }
 
 pub fn assemble() {
@@ -344,10 +369,11 @@ pub fn assemble() {
     println!("{}?{}??", output_blocks.join(";"), output_connections.join(";"))
 }
 
+#[derive(Clone, Debug)]
 pub struct Adder {
-    width: u32,
-    output: Bus,
-    cout: NBlock
+    pub width: u32,
+    pub output: Bus,
+    pub cout: NBlock
 }
 
 impl Adder {
@@ -416,9 +442,9 @@ impl Adder {
         carryand.connect_bitwise(&carryor);
         let cout;
         if !sub {
-            cout = NBlock::new(15, x+width as i32, y, z, fixed, 0, Vec::new())
+            cout = NBlock::new(15, x+width as i32, y, z, fixed, 0)
         } else {
-            cout = NBlock::new(0, x+width as i32, y, z, fixed, 0, Vec::new())
+            cout = NBlock::new(0, x+width as i32, y, z, fixed, 0)
         }
 
         carryand.connect_from_one(cout.clone());
@@ -440,7 +466,7 @@ impl ops::Add for &Bus {
     type Output = ();
 
     fn add(self, rhs: Self) -> Self::Output {
-        self.connect_bitwise(rhs);
+        self.connect_bitwise(rhs as &dyn Bits);
     }
 }
 
@@ -452,11 +478,13 @@ impl ops::Add for &NBlock {
     }
 }
 
+#[derive(Clone, Debug)]
 enum Edges {
     Posedge,
     Negedge
 }
 
+#[derive(Clone, Debug)]
 pub struct Edge {
     etype: Edges,
     
@@ -466,8 +494,8 @@ pub struct Edge {
 impl Edge {
     pub fn new_posedge(pos: [i32; 3], clock: NBlock, fixed: bool) -> Edge {
         let [x, y, z] = pos;
-        let n = NBlock::new(0, x, y, z, fixed, 1, Vec::new());
-        let a = NBlock::new(1, x+1, y, z, fixed, 0, Vec::new());
+        let n = NBlock::new(0, x, y, z, fixed, 1);
+        let a = NBlock::new(1, x+1, y, z, fixed, 0);
         &n + &a;
         &clock + &n;
         &clock + &a;
@@ -475,10 +503,10 @@ impl Edge {
     }
     pub fn new_negedge(pos: [i32; 3], clock: NBlock, fixed: bool) -> Edge {
         let [x, y, z] = pos;
-        let a = NBlock::new(1, x, y, z, fixed, 0, Vec::new());
-        let n1 = NBlock::new(0, x-1, y, z, fixed, 0, Vec::new());
-        let o = NBlock::new(2, x-2, y, z, fixed, 0, Vec::new());
-        let n2 = NBlock::new(0, x-2, y, z, fixed, 0, Vec::new());
+        let a = NBlock::new(1, x, y, z, fixed, 0);
+        let n1 = NBlock::new(0, x-1, y, z, fixed, 0);
+        let o = NBlock::new(2, x-2, y, z, fixed, 0);
+        let n2 = NBlock::new(0, x-2, y, z, fixed, 0);
 
         &n2 + &a;
         &n1 + &a;
@@ -489,10 +517,11 @@ impl Edge {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Dff {
-    output: Bus,
-    edgein: NBlock,
-    width: u32
+    pub output: Bus,
+    pub edgein: NBlock,
+    pub width: u32
 }
 
 impl Dff {
@@ -501,7 +530,7 @@ impl Dff {
         let xor = Bus::new(width, [x,y,z], fixed, 3);
         let and = Bus::new(width, [x,y,z-1], fixed, 1);
         let tff = Bus::new(width, [x,y,z-2], fixed, 5);
-        let edgein = NBlock::new(15, x+width as i32, y, z, fixed, 0, Vec::new());
+        let edgein = NBlock::new(15, x+width as i32, y, z, fixed, 0);
         &tff + &xor;
         &xor + &and;
         &and + &tff;
@@ -515,6 +544,7 @@ impl Dff {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Comparator {
     pub output: NBlock
 }
@@ -522,7 +552,7 @@ pub struct Comparator {
 impl Comparator {
     pub fn new_eq(pos: [i32; 3], a: Bus, b: Bus, fixed: bool, width: u32) -> Comparator {
         let xnor = Bus::new(width, pos, fixed, 11);
-        let out = NBlock::new(1, pos[0]+width as i32, pos[1], pos[2], fixed, 0, Vec::new());
+        let out = NBlock::new(1, pos[0]+width as i32, pos[1], pos[2], fixed, 0);
         xnor.connect_logic(out.clone());
         &a + &xnor;
         &b + &xnor;
@@ -530,7 +560,7 @@ impl Comparator {
     }
     pub fn new_neq(pos: [i32; 3], a: Bus, b: Bus, fixed: bool, width: u32) -> Comparator {
         let xnor = Bus::new(width, pos, fixed, 11);
-        let out = NBlock::new(10, pos[0]+width as i32, pos[1], pos[2], fixed, 0, Vec::new());
+        let out = NBlock::new(10, pos[0]+width as i32, pos[1], pos[2], fixed, 0);
         xnor.connect_logic(out.clone());
         &a + &xnor;
         &b + &xnor;
@@ -541,7 +571,7 @@ impl Comparator {
         let xor = Bus::new(width, pos, fixed, 3);
         let and = Bus::new(width, [x,y,z-1], fixed, 1);
         let not = Bus::new(width-1, [x+1,y,z-2], fixed, 0);
-        let out = NBlock::new(15, x+width as i32, y, z, fixed, 0, Vec::new());
+        let out = NBlock::new(15, x+width as i32, y, z, fixed, 0);
 
         &a + &xor;
         &b + &xor;
@@ -560,7 +590,7 @@ impl Comparator {
         let xor = Bus::new(width, pos, fixed, 3);
         let and = Bus::new(width, [x,y,z-1], fixed, 1);
         let not = Bus::new(width-1, [x+1,y,z-2], fixed, 0);
-        let out = NBlock::new(15, x+width as i32, y, z, fixed, 0, Vec::new());
+        let out = NBlock::new(15, x+width as i32, y, z, fixed, 0);
 
         &a + &xor;
         &b + &xor;
@@ -581,7 +611,7 @@ impl Comparator {
         let xor = Bus::new(width, pos, fixed, 3);
         let and = Bus::new(width, [x,y,z-1], fixed, 1);
         let not = Bus::new(width-1, [x+1,y,z-2], fixed, 0);
-        let out = NBlock::new(15, x+width as i32, y, z, fixed, 0, Vec::new());
+        let out = NBlock::new(15, x+width as i32, y, z, fixed, 0);
 
         &a + &xor;
         &b + &xor;
@@ -603,7 +633,7 @@ impl Comparator {
         let xor = Bus::new(width, pos, fixed, 3);
         let and = Bus::new(width, [x,y,z-1], fixed, 1);
         let not = Bus::new(width-1, [x+1,y,z-2], fixed, 0);
-        let out = NBlock::new(15, x+width as i32, y, z, fixed, 0, Vec::new());
+        let out = NBlock::new(15, x+width as i32, y, z, fixed, 0);
 
         &a + &xor;
         &b + &xor;
@@ -620,8 +650,9 @@ impl Comparator {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct Mux {
-    output: Bus
+    pub output: Bus
 }
 
 impl Mux {
@@ -629,7 +660,7 @@ impl Mux {
         let [x, y, z] = pos;
         let t = Bus::new(width, pos, fixed, 1);
         let f = Bus::new(width, [x,y,z-1], fixed, 1);
-        let nsel = NBlock::new(0, x-1, y, z, fixed, 1, Vec::new());
+        let nsel = NBlock::new(0, x-1, y, z, fixed, 1);
         let o = Bus::new(width, [x,y,z-2], fixed, 15);
         &t + &o;
         &f + &o;

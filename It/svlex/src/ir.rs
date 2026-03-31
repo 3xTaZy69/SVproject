@@ -2,6 +2,8 @@
 
 Static Assignment IR ( Not single assignment )
 
+A lot of AI(Claude) was used here!!!
+
 */
 
 use crate::parser::{self, *};
@@ -31,8 +33,8 @@ pub enum UnOp {
 }
 #[derive(Debug)]
 pub struct SA {
-    target: String,
-    value: A
+    pub target: String,
+    pub value: A
 }
 
 #[derive(Debug)]
@@ -43,7 +45,7 @@ pub enum A {
     Const { len: u32, value: u64, signed: bool },
     UnOp { operation: UnOp, operand: String },
     BinOp { left: String, right: String, op: BinOp },
-    Dff { clock: String, input: String, len: u32 }, /*
+    Dff { clocks: Vec<Edge>, input: String }, /*
         not real "d flip flop", just specification for register input
      */
     Mux { sel: String, trueval: String, falseval: String },
@@ -51,7 +53,6 @@ pub enum A {
     Assign { from: String },
     Fixed { x: i32, y: i32, z: i32 },
     Ref { base: String, h: u32, l: u32},
-    NonBlock { from: String, clocks: Vec<Edge> }  
 }
 #[derive(Debug)]
 pub struct Ir {
@@ -212,11 +213,293 @@ impl Ir {
             Stmt::NonBlockAssign { target, value } => {
                 let name = self.exprtostr(target);
                 let value = self.lower_exp(value);
-                SA {target: name, value: A::NonBlock { from: value, clocks: ffclocks.unwrap() }}
+                SA {target: name, value: A::Dff { clocks: ffclocks.unwrap(), input: value.clone() }}
             }
             _ => panic!("EXPECTED ASSIGN, GOT {assign:?}")
         };
 
         String::new()
+    }
+    // made with AI
+    pub fn lower_code(&mut self, stmts: Vec<Stmt>, ffclocks: Option<Vec<Edge>>) {
+        for stmt in stmts {
+            match stmt.clone() {
+                Stmt::Decl { .. } => {
+                    self.lower_decl(stmt);
+                }
+                Stmt::BlockAssign { .. } 
+                | Stmt::NonBlockAssign { .. }
+                | Stmt::ContinuousAssign { .. } => {
+                    self.lower_assign(stmt, ffclocks.clone());
+                }
+                Stmt::IfStmt { .. } => {
+                    self.lower_if(stmt, ffclocks.clone());
+                }
+                Stmt::Case { expr, cases } => {
+                    self.lower_case(stmt, ffclocks.clone())
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn subst_expr(&mut self, expr: Expr, map: &std::collections::HashMap<String, String>) -> Expr {
+        match expr {
+            Expr::Ident(name) => {
+                Expr::Ident(map.get(&name).cloned().unwrap_or(name))
+            }
+            Expr::BinExpr { left, op, right } => Expr::BinExpr {
+                left:  Box::new(self.subst_expr(*left,  map)),
+                op,
+                right: Box::new(self.subst_expr(*right, map)),
+            },
+            Expr::UnExpr { operand, op } => Expr::UnExpr {
+                operand: Box::new(self.subst_expr(*operand, map)),
+                op,
+            },
+            other => other,
+        }
+    }
+
+    fn collect_targets(&mut self, stmts: &Vec<Stmt>) -> std::collections::HashSet<String> {
+        let mut targets = std::collections::HashSet::new();
+        for stmt in stmts {
+            match stmt {
+                Stmt::BlockAssign { target, .. }
+                | Stmt::NonBlockAssign { target, .. } => {
+                    let name = match target {
+                        Expr::Ident(x) => x.clone(),
+                        Expr::Ref { base, .. } => base.clone(),
+                        _ => continue,
+                    };
+                    targets.insert(name);
+                }
+                Stmt::IfStmt { true_code, false_code, .. } => {
+                    targets.extend(self.collect_targets(true_code));
+                    targets.extend( self.collect_targets(false_code));
+                }
+                _ => {}
+            }
+        }
+        targets
+    }
+
+    fn collect_branch(
+        &mut self,
+        stmts: Vec<Stmt>,
+        ffclocks: Option<Vec<Edge>>,
+    ) -> std::collections::HashMap<String, String> {
+        let mut map = std::collections::HashMap::new();
+
+        for stmt in stmts {
+            match stmt {
+                Stmt::IfStmt { expr, true_code, false_code } => {
+                    let inner_targets = self.collect_targets(&true_code)
+                        .into_iter()
+                        .chain(self.collect_targets(&false_code));
+                    
+                    self.lower_if(
+                        Stmt::IfStmt { expr, true_code, false_code },
+                        ffclocks.clone()
+                    );
+                    
+                    for k in inner_targets {
+                        map.insert(k.clone(), k.clone());
+                    }
+                }
+                Stmt::BlockAssign { ref target, ref value } => {
+                    let name = self.exprtostr(target.clone());
+                    let subst = self.subst_expr(value.clone(), &map);
+                    let val   = self.lower_exp(subst);
+                    map.insert(name, val);
+                }
+                Stmt::NonBlockAssign { ref target, ref value } => {
+                    let name = self.exprtostr(target.clone());
+                    let subst = self.subst_expr(value.clone(), &map);
+                    let val   = self.lower_exp(subst);
+                    map.insert(name, val);
+                }
+                other => {
+                    self.lower_code(vec![other], ffclocks.clone());
+                }
+            }
+        }
+
+        map
+    }
+
+    pub fn lower_if(&mut self, ifst: Stmt, ffclocks: Option<Vec<Edge>>) {
+        if let Stmt::IfStmt { expr, true_code, false_code } = ifst {
+            let sel = self.lower_exp(expr);
+
+            let then_map = self.collect_branch(true_code,  ffclocks.clone());
+            let else_map = self.collect_branch(false_code, ffclocks.clone());
+
+            let all_targets: Vec<String> = then_map.keys()
+                .chain(else_map.keys())
+                .cloned()
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+
+            for target in all_targets {
+                let mux = match (then_map.get(&target), else_map.get(&target)) {
+                    (Some(t), Some(f)) => A::Mux {
+                        sel: sel.clone(),
+                        trueval:  t.clone(),
+                        falseval: f.clone(),
+                    },
+                    (Some(t), None) => A::Mux {
+                        sel: sel.clone(),
+                        trueval:  t.clone(),
+                        falseval: target.clone(),
+                    },
+                    (None, Some(f)) => A::Mux {
+                        sel: sel.clone(),
+                        trueval:  target.clone(),
+                        falseval: f.clone(),
+                    },
+                    (None, None) => unreachable!(),
+                };
+                self.ir.push(SA { target, value: mux });
+            }
+        } else {
+            panic!("IF EXPECTED, GOT {:?}", ifst)
+        }
+    }
+    pub fn lower_case(&mut self, casest: Stmt, ffclocks: Option<Vec<Edge>>) {
+        if let Stmt::Case { expr, cases } = casest {
+
+
+            let case_expr = self.lower_exp(expr);
+
+
+            let mut default_body: Vec<Stmt> = Vec::new();
+            let mut value_cases: Vec<(Expr, Vec<Stmt>)> = Vec::new();
+
+            for case in cases {
+                match case {
+                    Case::Default { body } => {
+                        default_body = body;
+                    }
+                    Case::Value { value, body } => {
+                        value_cases.push((value, body));
+                    }
+                }
+            }
+
+
+            let mut result_map = self.collect_branch(default_body, ffclocks.clone());
+
+
+            for (case_val, case_body) in value_cases.into_iter().rev() {
+
+
+                let val_tmp = self.lower_exp(case_val);
+                let eq_tmp  = self.gettmp();
+                self.ir.push(SA {
+                    target: eq_tmp.clone(),
+                    value: A::BinOp {
+                        left:  case_expr.clone(),
+                        right: val_tmp,
+                        op:    BinOp::Eq,
+                    }
+                });
+
+                let branch_map = self.collect_branch(case_body, ffclocks.clone());
+
+                let all_targets: Vec<String> = result_map.keys()
+                    .chain(branch_map.keys())
+                    .cloned()
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+
+                let mut new_map = std::collections::HashMap::new();
+
+                for target in all_targets {
+                    let mux_tmp = self.gettmp();
+
+                    let mux = match (branch_map.get(&target), result_map.get(&target)) {
+
+                        (Some(t), Some(f)) => A::Mux {
+                            sel:      eq_tmp.clone(),
+                            trueval:  t.clone(),
+                            falseval: f.clone(),
+                        },
+
+                        (Some(t), None) => A::Mux {
+                            sel:      eq_tmp.clone(),
+                            trueval:  t.clone(),
+                            falseval: target.clone(),
+                        },
+
+                        (None, Some(f)) => A::Mux {
+                            sel:      eq_tmp.clone(),
+                            trueval:  target.clone(),
+                            falseval: f.clone(),
+                        },
+                        (None, None) => unreachable!(),
+                    };
+
+                    self.ir.push(SA { target: mux_tmp.clone(), value: mux });
+                    new_map.insert(target, mux_tmp);
+                }
+
+                result_map = new_map;
+            }
+
+
+            for (target, from) in result_map {
+                self.ir.push(SA {
+                    target,
+                    value: A::Assign { from }
+                });
+            }
+
+        } else {
+            panic!("CASE EXPECTED, GOT {:?}", casest)
+        }
+    }
+    pub fn lower_fixed(&mut self, fx: Stmt) {
+        if let Stmt::Fixed { x, y, z, var } = fx {
+            self.ir.push(SA { target: var, value: A::Fixed { x, y, z } })
+        } else {
+            panic!("EXPECTED FIXED, GOT {fx:?}")
+        }
+    }
+    pub fn lower(&mut self, parts: Vec<Part>) {
+        for part in parts {
+            match part {
+                Part::Stmt(stmt) => {
+                    match stmt {
+                        Stmt::Decl { .. }  => { self.lower_decl(stmt); }
+                        Stmt::Fixed { .. } => { self.lower_fixed(stmt); }
+                        _ => {}
+                    }
+                }
+                Part::Block(block) => {
+                    match block {
+                        Block::Module { code, .. } => {
+                            self.lower(code);
+                        }
+                        Block::AlwaysComb { code } => {
+                            self.lower_code(code, None);
+                        }
+                        Block::AlwaysFf { code , clocks} => {
+                            self.lower_code(code, Some(clocks));
+                        }
+                        Block::Initial { code } => {
+                            for stmt in code {
+                                match stmt {
+                                    Stmt::Fixed { .. } => { self.lower_fixed(stmt); }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
