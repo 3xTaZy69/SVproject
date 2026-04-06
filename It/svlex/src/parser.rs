@@ -595,7 +595,7 @@ impl Parser {
             self.advance();
         } else {
             code.push(self.parse_code_once());
-        }
+        }a
         if let Some(Token::ELSE) = self.peek() {
             
             let mut fcode: Vec<Stmt> = Vec::new();
