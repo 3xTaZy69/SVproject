@@ -1,0 +1,51 @@
+// structures
+a = Reg(len, value, signed) - creating reg structure
+
+b = Net(len, signed) - creating net structure
+
+i = Const(len, value, signed) - creating constant
+
+k = Clock(timing)
+
+
+// operations
+c = UnOperation(Operand) - where Operation: BitwiseNot LogicNot Neg
+
+
+d = BinOperation(LeftOperand, RightOperand, len) - where Operation: BitwiseAnd BitwiseOr Xor LogicAnd LogicOr
+
+
+// dff
+e = Dff(Clock, input, len) - dff
+
+
+// temporaries
+
+%1 = ...
+%2 = ...
+
+
+// mux
+f = Mux(Sel, TrueVal, FalseVal) -- Sel == 1: TrueVal else FalseVal
+
+
+// comparsion
+h = Cmp(left, right) - comparing left and right where Cmp: Eq Neq Gt Ge Lt Le
+
+
+// assigning
+%1 = Block(%2) - Blocking assigning
+%3 = Dff(j) - NonBlocking assigning
+%4 = Assign(%5) - Continuous assigning
+
+
+// fixed
+%5 = fixed(any)
+
+
+// tick
+%6 = clock
+
+
+// ref
+%7 = Ref(from, h, l)
